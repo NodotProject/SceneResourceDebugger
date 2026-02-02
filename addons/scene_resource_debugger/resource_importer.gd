@@ -9,6 +9,16 @@ extends RefCounted
 ## to a temporary .tres to obtain its text representation,
 ## then rewrites the .tscn to embed the resources.
 
+const _TresParserScript := preload(
+	"res://addons/scene_resource_debugger/tres_parser.gd"
+)
+const _ImportSceneRewriter := preload(
+	"res://addons/scene_resource_debugger/import_scene_rewriter.gd"
+)
+const _ImportFileUtils := preload(
+	"res://addons/scene_resource_debugger/import_file_utils.gd"
+)
+
 const _TEMP_PATH: String = (
 	"res://.scene_res_import_temp.tres"
 )
@@ -28,6 +38,9 @@ class ImportResult extends RefCounted:
 
 var _ext_res_regex: RegEx
 var _sub_res_regex: RegEx
+var _tres_parser: TresParser
+var _scene_rewriter: ImportSceneRewriter
+var _file_utils: ImportFileUtils
 
 
 func _init() -> void:
@@ -42,6 +55,9 @@ func _init() -> void:
 	_sub_res_regex.compile(
 		'\\[sub_resource type="([^"]+)" id="([^"]+)"\\]'
 	)
+	_tres_parser = _TresParserScript.new()
+	_scene_rewriter = _ImportSceneRewriter.new()
+	_file_utils = _ImportFileUtils.new()
 
 
 ## Import all external .res/.tres resources referenced by
@@ -52,7 +68,7 @@ func import_all_resources(
 	var result := ImportResult.new()
 	result.scene_path = scene_path
 
-	var backup_err := _backup_scene(scene_path)
+	var backup_err := _file_utils.backup_scene(scene_path)
 	if backup_err != OK:
 		result.error_message = (
 			"Cannot create backup of %s" % scene_path
@@ -73,7 +89,7 @@ func import_all_resources(
 	var all_ext := _parse_ext_resources(content)
 	var res_ext: Array = []
 	for info: Dictionary in all_ext:
-		if _is_importable_path(info["path"]):
+		if ImportFileUtils.is_importable_path(info["path"]):
 			res_ext.append(info)
 
 	if res_ext.is_empty():
@@ -116,7 +132,7 @@ func import_all_resources(
 		)
 		return result
 
-	var new_content := _rewrite_scene_for_import(
+	var new_content := _scene_rewriter.rewrite_scene_for_import(
 		content, all_import_data, importing_ids
 	)
 
@@ -140,7 +156,7 @@ func import_all_resources(
 		new_content.count("[ext_resource ")
 	)
 
-	_delete_unreferenced_files(
+	_file_utils.delete_unreferenced_files(
 		result.imported_paths, scene_path, result
 	)
 
@@ -221,13 +237,13 @@ func _generate_import_data(
 		_TEMP_PATH, FileAccess.READ
 	)
 	if not temp_file:
-		_cleanup_temp()
+		_file_utils.cleanup_temp()
 		return {}
 	var tres_text: String = temp_file.get_as_text()
 	temp_file.close()
-	_cleanup_temp()
+	_file_utils.cleanup_temp()
 
-	var parsed := _parse_tres(tres_text)
+	var parsed := _tres_parser.parse_tres(tres_text)
 	if parsed.is_empty():
 		return {}
 
@@ -287,7 +303,7 @@ func _generate_import_data(
 		var props: String = "\n".join(
 			sub_block["lines"]
 		)
-		props = _remap_references(
+		props = _scene_rewriter.remap_references(
 			props, id_remap, ext_remap, ext_to_sub
 		)
 		if props.strip_edges().is_empty():
@@ -303,7 +319,7 @@ func _generate_import_data(
 	var main_props: String = "\n".join(
 		parsed["resource_lines"]
 	)
-	main_props = _remap_references(
+	main_props = _scene_rewriter.remap_references(
 		main_props, id_remap, ext_remap, ext_to_sub
 	)
 	if main_props.strip_edges().is_empty():
@@ -320,232 +336,7 @@ func _generate_import_data(
 	}
 
 
-## Parse a .tres file into ext_resources, sub_resources,
-## and the main [resource] properties.
-func _parse_tres(tres_text: String) -> Dictionary:
-	var lines := tres_text.split("\n")
-	var ext_resources: Array = []
-	var sub_resources: Array = []
-	var resource_lines: PackedStringArray = []
-
-	var section: String = ""
-	var cur_sub: Dictionary = {}
-	var cur_lines: PackedStringArray = []
-
-	for line: String in lines:
-		if line.begins_with("[gd_resource "):
-			section = "header"
-			continue
-
-		if line.begins_with("[ext_resource "):
-			_flush_sub(section, cur_sub, cur_lines,
-				sub_resources)
-			section = "ext"
-			var m := _ext_res_regex.search(line)
-			if m:
-				ext_resources.append({
-					"type": m.get_string(1),
-					"uid": m.get_string(2),
-					"path": m.get_string(3),
-					"id": m.get_string(4),
-				})
-			continue
-
-		if line.begins_with("[sub_resource "):
-			_flush_sub(section, cur_sub, cur_lines,
-				sub_resources)
-			var m := _sub_res_regex.search(line)
-			if m:
-				section = "sub"
-				cur_sub = {
-					"type": m.get_string(1),
-					"id": m.get_string(2),
-				}
-				cur_lines = []
-			continue
-
-		if line.begins_with("[resource]"):
-			_flush_sub(section, cur_sub, cur_lines,
-				sub_resources)
-			section = "resource"
-			cur_lines = []
-			continue
-
-		if not line.strip_edges().is_empty():
-			cur_lines.append(line)
-
-	if section == "resource":
-		resource_lines = cur_lines
-	elif section == "sub":
-		cur_sub["lines"] = cur_lines.duplicate()
-		sub_resources.append(cur_sub)
-
-	return {
-		"ext_resources": ext_resources,
-		"sub_resources": sub_resources,
-		"resource_lines": resource_lines,
-	}
-
-
-## Flush a pending sub_resource block during parsing.
-func _flush_sub(
-	section: String,
-	sub: Dictionary,
-	lines: PackedStringArray,
-	sub_resources: Array
-) -> void:
-	if section == "sub" and not sub.is_empty():
-		sub["lines"] = lines.duplicate()
-		sub_resources.append(sub)
-
-
-# ── Reference remapping ────────────────────────────────
-
-
-## Remap SubResource() and ExtResource() references.
-func _remap_references(
-	text: String,
-	sub_id_remap: Dictionary,
-	ext_id_remap: Dictionary,
-	ext_to_sub_remap: Dictionary
-) -> String:
-	var result: String = text
-	for old_id: String in sub_id_remap:
-		result = result.replace(
-			'SubResource("%s")' % old_id,
-			'SubResource("%s")' % sub_id_remap[old_id]
-		)
-	for old_id: String in ext_id_remap:
-		result = result.replace(
-			'ExtResource("%s")' % old_id,
-			'ExtResource("%s")' % ext_id_remap[old_id]
-		)
-	for old_id: String in ext_to_sub_remap:
-		result = result.replace(
-			'ExtResource("%s")' % old_id,
-			'SubResource("%s")' % ext_to_sub_remap[old_id]
-		)
-	return result
-
-
-# ── Scene text rewriting ───────────────────────────────
-
-
-## Rewrite scene text: remove imported ext_resource lines,
-## insert sub_resource blocks, update references.
-func _rewrite_scene_for_import(
-	content: String,
-	import_data_list: Array,
-	importing_ids: PackedStringArray
-) -> String:
-	var lines: PackedStringArray = content.split("\n")
-
-	# Collect all new content to insert
-	var new_ext_lines: Array = []
-	var new_sub_blocks: Array = []
-	for data: Dictionary in import_data_list:
-		new_ext_lines.append_array(
-			data["new_ext_lines"]
-		)
-		new_sub_blocks.append_array(
-			data["sub_blocks"]
-		)
-
-	# Build output, skipping removed ext_resource lines
-	var output: Array = []
-	var inserted_ext: bool = new_ext_lines.is_empty()
-	var inserted_sub: bool = new_sub_blocks.is_empty()
-
-	for i in range(lines.size()):
-		var line: String = lines[i]
-
-		# Skip ext_resource lines being imported
-		if line.begins_with("[ext_resource "):
-			var m := _ext_res_regex.search(line)
-			if m and m.get_string(4) in importing_ids:
-				continue
-			output.append(line)
-			continue
-
-		# Insert new ext_resource lines after last one
-		if (
-			not inserted_ext
-			and not line.begins_with("[ext_resource ")
-			and _had_ext_resource(output)
-		):
-			for ext_line: String in new_ext_lines:
-				output.append(ext_line)
-			inserted_ext = true
-
-		# Insert sub_resource blocks before first [node]
-		if (
-			not inserted_sub
-			and line.begins_with("[node ")
-		):
-			for block: String in new_sub_blocks:
-				output.append("")
-				output.append(block)
-			output.append("")
-			inserted_sub = true
-
-		output.append(line)
-
-	# Edge case: no [node] section found
-	if not inserted_sub:
-		for block: String in new_sub_blocks:
-			output.append("")
-			output.append(block)
-	if not inserted_ext:
-		# Insert after first line as fallback
-		for j in range(new_ext_lines.size()):
-			output.insert(1 + j, new_ext_lines[j])
-
-	# Replace ExtResource -> SubResource for imported IDs
-	var result_text: String = "\n".join(
-		PackedStringArray(output)
-	)
-	for ext_id: String in importing_ids:
-		result_text = result_text.replace(
-			'ExtResource("%s")' % ext_id,
-			'SubResource("%s")' % ext_id
-		)
-
-	result_text = _update_load_steps(result_text)
-	return result_text
-
-
-## Check if the output array has any ext_resource lines.
-func _had_ext_resource(output: Array) -> bool:
-	for i in range(output.size() - 1, -1, -1):
-		if output[i].begins_with("[ext_resource "):
-			return true
-		if output[i].begins_with("[gd_scene "):
-			return true
-	return false
-
-
-## Recount resources and update load_steps in the header.
-func _update_load_steps(content: String) -> String:
-	var ext_count: int = content.count("[ext_resource ")
-	var sub_count: int = content.count("[sub_resource ")
-	var total: int = ext_count + sub_count
-	var re := RegEx.new()
-	if total <= 0:
-		re.compile(' load_steps=\\d+')
-		return re.sub(content, "")
-	re.compile('load_steps=\\d+')
-	return re.sub(
-		content,
-		"load_steps=%d" % (total + 1)
-	)
-
-
 # ── Utility helpers ────────────────────────────────────
-
-
-## Check if an ext_resource path is an importable resource.
-static func _is_importable_path(path: String) -> bool:
-	return path.ends_with(".res") or path.ends_with(".tres")
 
 
 ## Find an ext_resource entry by path.
@@ -590,80 +381,3 @@ func _generate_unique_ext_id(
 	return candidate
 
 
-## Create a backup copy of a scene file.
-func _backup_scene(scene_path: String) -> Error:
-	var backup_path: String = scene_path + ".backup"
-	var abs_src: String = ProjectSettings.globalize_path(
-		scene_path
-	)
-	var abs_dst: String = ProjectSettings.globalize_path(
-		backup_path
-	)
-	return DirAccess.copy_absolute(abs_src, abs_dst)
-
-
-## Delete imported files that are no longer referenced by
-## any other .tscn file in the project.
-func _delete_unreferenced_files(
-	imported_paths: Array[String],
-	scene_path: String,
-	result: ImportResult
-) -> void:
-	var tscn_paths: PackedStringArray = []
-	_find_tscn_files("res://", tscn_paths)
-
-	# Read all scene files except the one just modified.
-	var other_contents: PackedStringArray = []
-	for path: String in tscn_paths:
-		if path == scene_path:
-			continue
-		var file := FileAccess.open(path, FileAccess.READ)
-		if file:
-			other_contents.append(file.get_as_text())
-			file.close()
-
-	for res_path: String in imported_paths:
-		var referenced := false
-		for content: String in other_contents:
-			if content.find(res_path) != -1:
-				referenced = true
-				break
-		if referenced:
-			result.kept_files.append(res_path)
-		else:
-			var abs_p: String = (
-				ProjectSettings.globalize_path(res_path)
-			)
-			if DirAccess.remove_absolute(abs_p) == OK:
-				result.deleted_files.append(res_path)
-			else:
-				result.kept_files.append(res_path)
-
-
-## Recursively find all .tscn files in the project.
-func _find_tscn_files(
-	path: String, results: PackedStringArray
-) -> void:
-	var dir := DirAccess.open(path)
-	if not dir:
-		return
-	dir.list_dir_begin()
-	var file_name: String = dir.get_next()
-	while file_name != "":
-		if dir.current_is_dir():
-			if file_name != "." and file_name != "..":
-				_find_tscn_files(
-					path.path_join(file_name), results
-				)
-		elif file_name.ends_with(".tscn"):
-			results.append(path.path_join(file_name))
-		file_name = dir.get_next()
-	dir.list_dir_end()
-
-
-## Remove the temporary .tres file.
-func _cleanup_temp() -> void:
-	if FileAccess.file_exists(_TEMP_PATH):
-		DirAccess.remove_absolute(
-			ProjectSettings.globalize_path(_TEMP_PATH)
-		)

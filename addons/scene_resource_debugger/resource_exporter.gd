@@ -11,10 +11,19 @@ extends RefCounted
 const SceneAnalyzer := preload(
 	"res://addons/scene_resource_debugger/scene_analyzer.gd"
 )
+const _ResourceCollector := preload(
+	"res://addons/scene_resource_debugger/resource_collector.gd"
+)
+const _ExportSceneRewriter := preload(
+	"res://addons/scene_resource_debugger/export_scene_rewriter.gd"
+)
 
 ## Minimum file size (bytes) for a resource to be exported.
 ## Resources smaller than this stay embedded in the scene.
 const _MIN_EXPORT_BYTES: int = 102400 # 100 KB
+
+var _collector: ResourceCollector
+var _rewriter: ExportSceneRewriter
 
 
 class ExportResult extends RefCounted:
@@ -25,6 +34,11 @@ class ExportResult extends RefCounted:
 	var scene_path: String = ""
 	var sub_resources_before: int = -1
 	var sub_resources_after: int = -1
+
+
+func _init() -> void:
+	_collector = _ResourceCollector.new()
+	_rewriter = _ExportSceneRewriter.new()
 
 
 ## Export all embedded resources from a scene to binary
@@ -60,7 +74,7 @@ func export_all_resources(
 		return result
 
 	var collected: Dictionary = {}
-	_walk_node_resources(root, collected)
+	_collector.walk_node_resources(root, collected)
 
 	if collected.is_empty():
 		root.free()
@@ -110,9 +124,9 @@ func export_single_resource(
 		return result
 
 	var collected: Dictionary = {}
-	_walk_node_resources(root, collected)
+	_collector.walk_node_resources(root, collected)
 
-	var target_res := _find_resource_by_id(
+	var target_res := _collector.find_resource_by_id(
 		collected, sub_resource_id
 	)
 	if not target_res:
@@ -128,7 +142,7 @@ func export_single_resource(
 		target_res, target_path
 	)
 	if save_err == OK:
-		var sub_id: String = _extract_sub_resource_id(
+		var sub_id: String = _collector.extract_sub_resource_id(
 			target_res
 		)
 		target_res.take_over_path(target_path)
@@ -205,7 +219,7 @@ func _export_collected_resources(
 	result: ExportResult,
 	exported_map: Dictionary
 ) -> void:
-	var sorted_entries: Array = _dependency_sort(collected)
+	var sorted_entries: Array = _collector.dependency_sort(collected)
 	var scene_name: String = (
 		scene_path.get_file().get_basename()
 	)
@@ -216,7 +230,7 @@ func _export_collected_resources(
 		var res_type: String = entry["type"]
 
 		# Extract sub_resource ID from embedded path
-		var sub_id: String = _extract_sub_resource_id(
+		var sub_id: String = _collector.extract_sub_resource_id(
 			resource
 		)
 		if sub_id.is_empty():
@@ -301,7 +315,7 @@ func _finalize_scene(
 		return
 
 	# Rewrite the scene file text
-	var rewrite_err := _rewrite_scene_text(
+	var rewrite_err := _rewriter.rewrite_scene_text(
 		scene_path, exported_map, analysis
 	)
 	if rewrite_err != OK:
@@ -336,300 +350,6 @@ func _finalize_scene(
 			result.error_message = warn
 		else:
 			result.error_message += " | " + warn
-
-
-## Extract the sub_resource ID from a resource's embedded
-## path. Godot sets paths like "res://scene.tscn::Type_id"
-## for embedded sub_resources. Returns the part after "::".
-func _extract_sub_resource_id(resource: Resource) -> String:
-	var rpath: String = resource.resource_path
-	var sep_pos: int = rpath.find("::")
-	if sep_pos >= 0:
-		return rpath.substr(sep_pos + 2)
-	return ""
-
-
-## Rewrite the .tscn file: remove sub_resource blocks,
-## add ext_resource lines, replace SubResource() refs.
-func _rewrite_scene_text(
-	scene_path: String,
-	id_mapping: Dictionary,
-	analysis: RefCounted
-) -> Error:
-	var file := FileAccess.open(
-		scene_path, FileAccess.READ
-	)
-	if not file:
-		return ERR_FILE_CANT_OPEN
-	var content: String = file.get_as_text()
-	file.close()
-
-	var lines: PackedStringArray = content.split("\n")
-
-	# Step 1: identify line ranges to remove — ONLY blocks
-	# that were successfully mapped to external files.
-	# Unmapped sub_resource blocks must stay in the .tscn.
-	var remove_lines: Dictionary = {}
-	for sub_res in analysis.sub_resources:
-		if not id_mapping.has(sub_res.id):
-			continue
-		for i in range(sub_res.line_start, sub_res.line_end + 1):
-			remove_lines[i] = true
-		# Also remove trailing blank lines after block
-		var next: int = sub_res.line_end + 1
-		while (
-			next < lines.size()
-			and lines[next].strip_edges().is_empty()
-		):
-			remove_lines[next] = true
-			next += 1
-
-	# Step 2: build ext_resource lines to insert
-	var ext_lines: PackedStringArray = []
-	for sid: String in id_mapping:
-		var res_path: String = id_mapping[sid]
-		var res_type: String = _type_for_sub_id(
-			sid, analysis
-		)
-		var uid_attr: String = _get_uid_attr(res_path)
-		ext_lines.append(
-			'[ext_resource type="%s"%s path="%s" id="%s"]'
-			% [res_type, uid_attr, res_path, sid]
-		)
-
-	# Step 3: find insertion point (after last existing
-	# ext_resource, or after the gd_scene header).
-	var insert_after: int = 0
-	for i in range(lines.size()):
-		if lines[i].begins_with("[ext_resource "):
-			insert_after = i
-		elif lines[i].begins_with("[gd_scene "):
-			if insert_after == 0:
-				insert_after = i
-
-	# Step 4: build output, inserting ext_resources and
-	# skipping removed sub_resource blocks.
-	var output: PackedStringArray = []
-	for i in range(lines.size()):
-		if remove_lines.has(i):
-			continue
-		output.append(lines[i])
-		if i == insert_after and not ext_lines.is_empty():
-			for ext_line in ext_lines:
-				output.append(ext_line)
-
-	# Step 5: replace SubResource("id") -> ExtResource("id")
-	# for all mapped IDs.
-	var result_text: String = "\n".join(output)
-	for sid: String in id_mapping:
-		result_text = result_text.replace(
-			'SubResource("%s")' % sid,
-			'ExtResource("%s")' % sid
-		)
-
-	# Step 6: update load_steps in the header
-	result_text = _update_load_steps(result_text)
-
-	# Write the modified file
-	var out_file := FileAccess.open(
-		scene_path, FileAccess.WRITE
-	)
-	if not out_file:
-		return ERR_FILE_CANT_WRITE
-	out_file.store_string(result_text)
-	out_file.close()
-	return OK
-
-
-## Get the resource type for a sub_resource ID from the
-## analysis data.
-func _type_for_sub_id(
-	sid: String, analysis: RefCounted
-) -> String:
-	for sub_res in analysis.sub_resources:
-		if sub_res.id == sid:
-			return sub_res.type
-	return "Resource"
-
-
-## Build a UID attribute string for an ext_resource line.
-## Returns ' uid="uid://..."' or empty if unavailable.
-func _get_uid_attr(res_path: String) -> String:
-	var uid: int = ResourceLoader.get_resource_uid(
-		res_path
-	)
-	if uid >= 0:
-		var uid_text: String = ResourceUID.id_to_text(uid)
-		return ' uid="%s"' % uid_text
-	return ""
-
-
-## Recount ext_resource + sub_resource entries and update
-## load_steps in the gd_scene header.
-func _update_load_steps(content: String) -> String:
-	var ext_count: int = content.count("[ext_resource ")
-	var sub_count: int = content.count("[sub_resource ")
-	var total: int = ext_count + sub_count
-	if total <= 0:
-		# Remove load_steps entirely if no resources
-		var re := RegEx.new()
-		re.compile(
-			' load_steps=\\d+'
-		)
-		return re.sub(content, "")
-	var re := RegEx.new()
-	re.compile('load_steps=\\d+')
-	# load_steps = resource count + 1 (for the scene)
-	return re.sub(
-		content,
-		"load_steps=%d" % (total + 1)
-	)
-
-
-## Find a resource in the collected dict by sub_resource id.
-## Matches via the embedded path suffix (::Type_id).
-func _find_resource_by_id(
-	collected: Dictionary, sub_id: String
-) -> Resource:
-	for key in collected:
-		var entry: Dictionary = collected[key]
-		var res: Resource = entry["resource"]
-		if _extract_sub_resource_id(res) == sub_id:
-			return res
-	return null
-
-
-# ── Internal methods ──────────────────────────────────────
-
-
-## Walk a node tree recursively collecting embedded resources.
-func _walk_node_resources(
-	node: Node, collected: Dictionary
-) -> void:
-	_inspect_node_properties(node, collected)
-	for child in node.get_children():
-		_walk_node_resources(child, collected)
-
-
-## Inspect all properties of a node for embedded Resources.
-func _inspect_node_properties(
-	node: Node, collected: Dictionary
-) -> void:
-	for prop in node.get_property_list():
-		if prop["type"] == TYPE_OBJECT:
-			var value: Variant = node.get(prop["name"])
-			if value is Resource:
-				_collect_resource(
-					value, collected, node.name,
-					prop["name"]
-				)
-
-
-## Collect a resource if it is embedded in the scene.
-## Embedded sub_resources have paths like
-## "res://scene.tscn::Type_id" or empty paths.
-## External resources have standalone file paths.
-func _collect_resource(
-	resource: Resource,
-	collected: Dictionary,
-	source_name: String,
-	property_name: String
-) -> void:
-	if not is_instance_valid(resource):
-		return
-	var rpath: String = resource.resource_path
-	if not rpath.is_empty() and "::" not in rpath:
-		return
-
-	var key: int = resource.get_instance_id()
-	if collected.has(key):
-		return
-
-	collected[key] = {
-		"resource": resource,
-		"type": resource.get_class(),
-		"source": source_name,
-		"property": property_name,
-	}
-
-	_inspect_resource_properties(resource, collected)
-
-
-## Recursively inspect a Resource's properties for nested
-## embedded resources.
-func _inspect_resource_properties(
-	resource: Resource, collected: Dictionary
-) -> void:
-	for prop in resource.get_property_list():
-		if prop["type"] == TYPE_OBJECT:
-			var value: Variant = resource.get(prop["name"])
-			if value is Resource:
-				_collect_resource(
-					value, collected,
-					resource.get_class(),
-					prop["name"]
-				)
-
-
-## Sort collected resources by dependency order:
-## leaf resources first, composites last.
-func _dependency_sort(collected: Dictionary) -> Array:
-	var entries: Array = collected.values()
-	var id_set: Dictionary = {}
-	for entry in entries:
-		var res: Resource = entry["resource"]
-		id_set[res.get_instance_id()] = entry
-
-	var deps: Dictionary = {}
-	for entry in entries:
-		var res: Resource = entry["resource"]
-		var res_id: int = res.get_instance_id()
-		deps[res_id] = []
-		for prop in res.get_property_list():
-			if prop["type"] == TYPE_OBJECT:
-				var val: Variant = res.get(prop["name"])
-				if val is Resource:
-					var val_id: int = val.get_instance_id()
-					if id_set.has(val_id):
-						deps[res_id].append(val_id)
-
-	# Topological sort (Kahn's algorithm)
-	var in_degree: Dictionary = {}
-	for res_id in deps:
-		if not in_degree.has(res_id):
-			in_degree[res_id] = 0
-		for dep_id in deps[res_id]:
-			if not in_degree.has(dep_id):
-				in_degree[dep_id] = 0
-			in_degree[res_id] += 1
-
-	var queue: Array = []
-	for res_id in in_degree:
-		if in_degree[res_id] == 0:
-			queue.append(res_id)
-
-	var sorted_ids: Array = []
-	while not queue.is_empty():
-		var current: int = queue.pop_front()
-		sorted_ids.append(current)
-		for res_id in deps:
-			if current in deps[res_id]:
-				in_degree[res_id] -= 1
-				if in_degree[res_id] == 0:
-					queue.append(res_id)
-
-	var sorted_entries: Array = []
-	for res_id in sorted_ids:
-		if id_set.has(res_id):
-			sorted_entries.append(id_set[res_id])
-
-	# Circular deps fallback
-	for entry in entries:
-		var res: Resource = entry["resource"]
-		if res.get_instance_id() not in sorted_ids:
-			sorted_entries.append(entry)
-
-	return sorted_entries
 
 
 ## Save a resource to binary .res format.

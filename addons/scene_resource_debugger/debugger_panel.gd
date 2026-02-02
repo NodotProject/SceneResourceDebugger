@@ -40,6 +40,7 @@ var _browse_dir_button: Button
 var _export_selected_button: Button
 var _import_all_button: Button
 var _log_output: RichTextLabel
+var _logger: PanelLogger
 
 
 func _ready() -> void:
@@ -47,182 +48,47 @@ func _ready() -> void:
 	_exporter = ResourceExporter.new()
 	_importer = SceneResImporter.new()
 	_build_ui()
+	_logger = PanelLogger.new(_log_output)
 
 
 func on_session_started() -> void:
-	_log("Session started. Click 'Scan Project' to analyze.")
+	_logger.log_message("Session started. Click 'Scan Project' to analyze.")
 
 
 func on_session_stopped() -> void:
-	_log("Session stopped.")
+	_logger.log_message("Session stopped.")
 
 
 func _build_ui() -> void:
-	size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var controls := PanelBuilder.build(self)
+	_scan_button = controls["scan_button"]
+	_refresh_button = controls["refresh_button"]
+	_addons_check = controls["addons_check"]
+	_status_label = controls["status_label"]
+	_scene_filter = controls["scene_filter"]
+	_scene_tree = controls["scene_tree"]
+	_detail_title = controls["detail_title"]
+	_resource_tree = controls["resource_tree"]
+	_export_all_button = controls["export_all_button"]
+	_export_dir_input = controls["export_dir_input"]
+	_browse_dir_button = controls["browse_dir_button"]
+	_export_selected_button = controls["export_selected_button"]
+	_import_all_button = controls["import_all_button"]
+	_log_output = controls["log_output"]
 
-	_build_toolbar()
-	_build_main_content()
-
-
-func _build_toolbar() -> void:
-	var toolbar := HBoxContainer.new()
-	add_child(toolbar)
-
-	_scan_button = Button.new()
-	_scan_button.text = "Scan Project"
+	# Connect signals
 	_scan_button.pressed.connect(_on_scan_pressed)
-	toolbar.add_child(_scan_button)
-
-	_refresh_button = Button.new()
-	_refresh_button.text = "Refresh"
 	_refresh_button.pressed.connect(_on_scan_pressed)
-	toolbar.add_child(_refresh_button)
-
-	_addons_check = CheckBox.new()
-	_addons_check.text = "Include addons"
-	_addons_check.button_pressed = false
-	toolbar.add_child(_addons_check)
-
-	_status_label = Label.new()
-	_status_label.text = "Click 'Scan Project' to analyze scenes"
-	_status_label.size_flags_horizontal = (
-		Control.SIZE_EXPAND_FILL
-	)
-	_status_label.horizontal_alignment = (
-		HORIZONTAL_ALIGNMENT_RIGHT
-	)
-	toolbar.add_child(_status_label)
-
-
-func _build_main_content() -> void:
-	var main_split := HSplitContainer.new()
-	main_split.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	main_split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	add_child(main_split)
-
-	_build_scene_list(main_split)
-	_build_detail_panel(main_split)
-
-
-func _build_scene_list(parent: Control) -> void:
-	var container := VBoxContainer.new()
-	container.custom_minimum_size = Vector2(350, 0)
-	container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	parent.add_child(container)
-
-	var header := Label.new()
-	header.text = "Scenes by Size"
-	container.add_child(header)
-
-	_scene_filter = LineEdit.new()
-	_scene_filter.placeholder_text = "Filter scenes..."
 	_scene_filter.text_changed.connect(_on_filter_changed)
-	container.add_child(_scene_filter)
-
-	_scene_tree = Tree.new()
-	_scene_tree.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_scene_tree.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_scene_tree.columns = 3
-	_scene_tree.set_column_title(0, "Scene")
-	_scene_tree.set_column_title(1, "Size")
-	_scene_tree.set_column_title(2, "Sub-Resources")
-	_scene_tree.column_titles_visible = true
-	_scene_tree.set_column_expand(0, true)
-	_scene_tree.set_column_expand(1, false)
-	_scene_tree.set_column_custom_minimum_width(1, 80)
-	_scene_tree.set_column_expand(2, false)
-	_scene_tree.set_column_custom_minimum_width(2, 100)
 	_scene_tree.item_selected.connect(_on_scene_selected)
-	container.add_child(_scene_tree)
-
-
-func _build_detail_panel(parent: Control) -> void:
-	var container := VBoxContainer.new()
-	container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	parent.add_child(container)
-
-	_detail_title = Label.new()
-	_detail_title.text = "Select a scene to view resource breakdown"
-	container.add_child(_detail_title)
-
-	_resource_tree = Tree.new()
-	_resource_tree.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_resource_tree.columns = 3
-	_resource_tree.set_column_title(0, "Type / ID")
-	_resource_tree.set_column_title(1, "Count")
-	_resource_tree.set_column_title(2, "Est. Size")
-	_resource_tree.column_titles_visible = true
-	_resource_tree.set_column_expand(0, true)
-	_resource_tree.set_column_expand(1, false)
-	_resource_tree.set_column_custom_minimum_width(1, 60)
-	_resource_tree.set_column_expand(2, false)
-	_resource_tree.set_column_custom_minimum_width(2, 80)
-	container.add_child(_resource_tree)
-
-	var separator := HSeparator.new()
-	container.add_child(separator)
-
-	_build_export_controls(container)
-
-	_log_output = RichTextLabel.new()
-	_log_output.custom_minimum_size = Vector2(0, 100)
-	_log_output.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_log_output.bbcode_enabled = true
-	_log_output.scroll_following = true
-	_log_output.selection_enabled = true
-	_log_output.context_menu_enabled = true
-	container.add_child(_log_output)
-
-
-func _build_export_controls(parent: Control) -> void:
-	# Export all row
-	var export_all_row := HBoxContainer.new()
-	parent.add_child(export_all_row)
-
-	_export_all_button = Button.new()
-	_export_all_button.text = "Export All to Binary (.res)"
-	_export_all_button.disabled = true
 	_export_all_button.pressed.connect(_on_export_all_pressed)
-	export_all_row.add_child(_export_all_button)
-
-	_export_dir_input = LineEdit.new()
-	_export_dir_input.placeholder_text = "(scene directory)"
-	_export_dir_input.size_flags_horizontal = (
-		Control.SIZE_EXPAND_FILL
-	)
-	export_all_row.add_child(_export_dir_input)
-
-	_browse_dir_button = Button.new()
-	_browse_dir_button.text = "Browse..."
 	_browse_dir_button.pressed.connect(_on_browse_dir_pressed)
-	export_all_row.add_child(_browse_dir_button)
-
-	# Export selected row
-	var export_sel_row := HBoxContainer.new()
-	parent.add_child(export_sel_row)
-
-	_export_selected_button = Button.new()
-	_export_selected_button.text = "Export Selected Resource..."
-	_export_selected_button.disabled = true
 	_export_selected_button.pressed.connect(
 		_on_export_selected_pressed
 	)
-	export_sel_row.add_child(_export_selected_button)
-
-	# Import row
-	var import_row := HBoxContainer.new()
-	parent.add_child(import_row)
-
-	_import_all_button = Button.new()
-	_import_all_button.text = (
-		"Import All External Resources Into Scene"
-	)
-	_import_all_button.disabled = true
 	_import_all_button.pressed.connect(
 		_on_import_all_pressed
 	)
-	import_row.add_child(_import_all_button)
 
 
 # ── Signal handlers ──────────────────────────────────────────
@@ -245,7 +111,7 @@ func _on_scan_pressed() -> void:
 		"Found %d scenes (%d with embedded resources)"
 		% [_scene_analyses.size(), scenes_with_subs]
 	)
-	_log(
+	_logger.log_message(
 		"Scan complete: %d scenes found."
 		% _scene_analyses.size()
 	)
@@ -282,7 +148,7 @@ func _on_scene_selected() -> void:
 
 func _on_export_all_pressed() -> void:
 	if not _current_analysis:
-		_log("[color=red]ERROR: No scene selected.[/color]")
+		_logger.log_message("[color=red]ERROR: No scene selected.[/color]")
 		return
 
 	var target_dir: String = _export_dir_input.text.strip_edges()
@@ -292,7 +158,7 @@ func _on_export_all_pressed() -> void:
 	var scene_name: String = (
 		_current_analysis.file_path.get_file()
 	)
-	_log(
+	_logger.log_message(
 		"Exporting sub_resources from %s to %s..."
 		% [scene_name, target_dir]
 	)
@@ -302,17 +168,17 @@ func _on_export_all_pressed() -> void:
 		_current_analysis.file_path, target_dir
 	)
 	if result.success:
-		_log(
+		_logger.log_message(
 			"[color=green]Exported %d resources.[/color]"
 			% result.exported_count
 		)
 		for p in result.exported_paths:
-			_log("  -> %s" % p)
-		_log_verification(result)
+			_logger.log_message("  -> %s" % p)
+		_logger.log_verification(result)
 		# Refresh analysis for the modified scene
 		_on_scan_pressed()
 	else:
-		_log(
+		_logger.log_message(
 			"[color=red]ERROR: %s[/color]"
 			% result.error_message
 		)
@@ -322,19 +188,19 @@ func _on_export_all_pressed() -> void:
 
 func _on_export_selected_pressed() -> void:
 	if not _current_analysis:
-		_log("[color=red]ERROR: No scene selected.[/color]")
+		_logger.log_message("[color=red]ERROR: No scene selected.[/color]")
 		return
 
 	var selected: TreeItem = _resource_tree.get_selected()
 	if not selected:
-		_log(
+		_logger.log_message(
 			"[color=red]ERROR: Select a resource first.[/color]"
 		)
 		return
 
 	var sub_res_id: String = selected.get_metadata(0) as String
 	if sub_res_id.is_empty():
-		_log(
+		_logger.log_message(
 			"[color=red]Select an individual resource, "
 			+ "not a type group.[/color]"
 		)
@@ -351,14 +217,14 @@ func _on_export_selected_pressed() -> void:
 				_current_analysis.file_path, sub_res_id, path
 			)
 			if result.success:
-				_log(
+				_logger.log_message(
 					"[color=green]Exported to %s[/color]"
 					% path
 				)
-				_log_verification(result)
+				_logger.log_verification(result)
 				_on_scan_pressed()
 			else:
-				_log(
+				_logger.log_message(
 					"[color=red]ERROR: %s[/color]"
 					% result.error_message
 				)
@@ -374,13 +240,13 @@ func _on_export_selected_pressed() -> void:
 
 func _on_import_all_pressed() -> void:
 	if not _current_analysis:
-		_log("[color=red]ERROR: No scene selected.[/color]")
+		_logger.log_message("[color=red]ERROR: No scene selected.[/color]")
 		return
 
 	var scene_name: String = (
 		_current_analysis.file_path.get_file()
 	)
-	_log(
+	_logger.log_message(
 		"Importing external resources back into %s..."
 		% scene_name
 	)
@@ -390,32 +256,32 @@ func _on_import_all_pressed() -> void:
 		_current_analysis.file_path
 	)
 	if result.success:
-		_log(
+		_logger.log_message(
 			"[color=green]Imported %d resources.[/color]"
 			% result.imported_count
 		)
 		for p: String in result.imported_paths:
-			_log("  <- %s" % p)
+			_logger.log_message("  <- %s" % p)
 		if not result.deleted_files.is_empty():
-			_log(
+			_logger.log_message(
 				"[color=green]Deleted %d unreferenced "
 				% result.deleted_files.size()
 				+ "files:[/color]"
 			)
 			for p: String in result.deleted_files:
-				_log("  x %s" % p)
+				_logger.log_message("  x %s" % p)
 		if not result.kept_files.is_empty():
-			_log(
+			_logger.log_message(
 				"Kept %d files (still referenced "
 				% result.kept_files.size()
 				+ "by other scenes):"
 			)
 			for p: String in result.kept_files:
-				_log("  ~ %s" % p)
-		_log_import_verification(result)
+				_logger.log_message("  ~ %s" % p)
+		_logger.log_import_verification(result)
 		_on_scan_pressed()
 	else:
-		_log(
+		_logger.log_message(
 			"[color=red]ERROR: %s[/color]"
 			% result.error_message
 		)
@@ -458,7 +324,7 @@ func _populate_scene_tree() -> void:
 		var item: TreeItem = _scene_tree.create_item(root)
 		item.set_text(0, path.get_file())
 		item.set_tooltip_text(0, path)
-		item.set_text(1, _format_bytes(analysis.file_size))
+		item.set_text(1, _logger.format_bytes(analysis.file_size))
 		item.set_text(
 			2, str(analysis.sub_resources.size())
 		)
@@ -498,7 +364,7 @@ func _populate_resource_tree() -> void:
 		type_item.set_text(0, type_name)
 		type_item.set_text(1, str(info["count"]))
 		type_item.set_text(
-			2, _format_bytes(info["bytes"])
+			2, _logger.format_bytes(info["bytes"])
 		)
 		# Type group has no export metadata
 		type_item.set_metadata(0, "")
@@ -512,7 +378,7 @@ func _populate_resource_tree() -> void:
 				child.set_text(0, sub_res.id)
 				child.set_text(1, "1")
 				child.set_text(
-					2, _format_bytes(sub_res.byte_size)
+					2, _logger.format_bytes(sub_res.byte_size)
 				)
 				# Store the sub_resource id for export
 				child.set_metadata(0, sub_res.id)
@@ -539,97 +405,14 @@ func _on_resource_tree_selected() -> void:
 # ── Utilities ────────────────────────────────────────────────
 
 
-func _format_bytes(bytes: int) -> String:
-	if bytes >= 1048576:
-		return "%.1f MB" % (bytes / 1048576.0)
-	if bytes >= 1024:
-		return "%.1f KB" % (bytes / 1024.0)
-	return "%d B" % bytes
-
-
-func _log_verification(result) -> void:
-	var before: int = result.sub_resources_before
-	var after: int = result.sub_resources_after
-	if before < 0 or after < 0:
-		_log(
-			"[color=yellow]Verification: could not read "
-			+ "scene file for sub_resource count.[/color]"
-		)
-		return
-
-	var removed: int = before - after
-	if removed > 0:
-		_log(
-			("[color=green]Verified: %d sub_resources "
-			+ "removed (%d -> %d).[/color]")
-			% [removed, before, after]
-		)
-	elif removed == 0 and result.exported_count > 0:
-		_log(
-			("[color=yellow]Warning: sub_resource count "
-			+ "unchanged (%d). Resources may still be "
-			+ "embedded in the scene.[/color]") % before
-		)
-	else:
-		_log(
-			"Sub_resources: %d before, %d after."
-			% [before, after]
-		)
-	if not result.error_message.is_empty():
-		_log(
-			"[color=yellow]%s[/color]"
-			% result.error_message
-		)
-
-
 func _has_importable_ext_resources(
 	analysis: RefCounted
 ) -> bool:
 	if not analysis:
 		return false
 	for ext_res in analysis.ext_resources:
-		if SceneResourceImporter._is_importable_path(
+		if ImportFileUtils.is_importable_path(
 			ext_res.path
 		):
 			return true
 	return false
-
-
-func _log_import_verification(result) -> void:
-	var before: int = result.ext_resources_before
-	var after: int = result.ext_resources_after
-	if before < 0 or after < 0:
-		_log(
-			"[color=yellow]Verification: could not read "
-			+ "scene file for ext_resource count.[/color]"
-		)
-		return
-
-	var removed: int = before - after
-	if removed > 0:
-		_log(
-			("[color=green]Verified: %d ext_resources "
-			+ "removed (%d -> %d).[/color]")
-			% [removed, before, after]
-		)
-	elif removed == 0 and result.imported_count > 0:
-		_log(
-			("[color=yellow]Warning: ext_resource count "
-			+ "unchanged (%d). Resources may not have "
-			+ "been fully embedded.[/color]") % before
-		)
-	else:
-		_log(
-			"Ext_resources: %d before, %d after."
-			% [before, after]
-		)
-	if not result.error_message.is_empty():
-		_log(
-			"[color=yellow]%s[/color]"
-			% result.error_message
-		)
-
-
-func _log(message: String) -> void:
-	if _log_output:
-		_log_output.append_text(message + "\n")
