@@ -1,0 +1,94 @@
+[gd_scene load_steps=10 format=3]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(0.15, 0.15, 0.2, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+content_margin_left = 12.0
+content_margin_top = 12.0
+content_margin_right = 12.0
+content_margin_bottom = 12.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_btn_normal"]
+bg_color = Color(0.3, 0.5, 0.9, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_btn_hover"]
+bg_color = Color(0.4, 0.6, 1.0, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_btn_pressed"]
+bg_color = Color(0.2, 0.4, 0.8, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_separator"]
+bg_color = Color(0.4, 0.4, 0.5, 0.5)
+content_margin_top = 1.0
+content_margin_bottom = 1.0
+
+[sub_resource type="LabelSettings" id="LabelSettings_title"]
+font_size = 24
+font_color = Color(1, 1, 1, 1)
+shadow_color = Color(0, 0, 0, 0.4)
+shadow_offset = Vector2(2, 2)
+
+[sub_resource type="LabelSettings" id="LabelSettings_body"]
+font_size = 14
+font_color = Color(0.8, 0.8, 0.85, 1)
+line_spacing = 4.0
+
+[sub_resource type="LabelSettings" id="LabelSettings_caption"]
+font_size = 11
+font_color = Color(0.5, 0.5, 0.6, 1)
+
+[sub_resource type="FontVariation" id="FontVariation_bold"]
+variation_embolden = 1.2
+
+[node name="PanelRoot" type="PanelContainer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="VBox"]
+layout_mode = 2
+text = "Scene Resource Debugger"
+label_settings = SubResource("LabelSettings_title")
+
+[node name="Separator" type="HSeparator" parent="VBox"]
+layout_mode = 2
+
+[node name="Description" type="Label" parent="VBox"]
+layout_mode = 2
+text = "Analyze and optimize your scene files."
+label_settings = SubResource("LabelSettings_body")
+autowrap_mode = 2
+
+[node name="Caption" type="Label" parent="VBox"]
+layout_mode = 2
+text = "All resources in this scene are under 100 KB."
+label_settings = SubResource("LabelSettings_caption")
+
+[node name="ButtonRow" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+
+[node name="AnalyzeBtn" type="Button" parent="VBox/ButtonRow"]
+layout_mode = 2
+text = "Analyze"
+
+[node name="ExportBtn" type="Button" parent="VBox/ButtonRow"]
+layout_mode = 2
+text = "Export"
