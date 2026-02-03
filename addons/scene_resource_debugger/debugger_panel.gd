@@ -175,6 +175,7 @@ func _on_export_all_pressed() -> void:
 		for p in result.exported_paths:
 			_logger.log_message("  -> %s" % p)
 		_logger.log_verification(result)
+		_refresh_editor_filesystem()
 		# Refresh analysis for the modified scene
 		_on_scan_pressed()
 	else:
@@ -222,6 +223,7 @@ func _on_export_selected_pressed() -> void:
 					% path
 				)
 				_logger.log_verification(result)
+				_refresh_editor_filesystem()
 				_on_scan_pressed()
 			else:
 				_logger.log_message(
@@ -279,6 +281,7 @@ func _on_import_all_pressed() -> void:
 			for p: String in result.kept_files:
 				_logger.log_message("  ~ %s" % p)
 		_logger.log_import_verification(result)
+		_refresh_editor_filesystem()
 		_on_scan_pressed()
 	else:
 		_logger.log_message(
@@ -400,6 +403,17 @@ func _on_resource_tree_selected() -> void:
 
 	var meta: String = selected.get_metadata(0) as String
 	_export_selected_button.disabled = meta.is_empty()
+
+
+# ── Editor filesystem ────────────────────────────────────────
+
+
+func _refresh_editor_filesystem() -> void:
+	if not Engine.is_editor_hint():
+		return
+	var efs := EditorInterface.get_resource_filesystem()
+	if efs:
+		efs.scan()
 
 
 # ── Utilities ────────────────────────────────────────────────

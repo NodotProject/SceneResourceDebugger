@@ -8,7 +8,6 @@ A Godot 4.6 editor plugin that analyzes large `.tscn` scene files, exports embed
 - **Resource analysis** -- Break down embedded sub-resources by type (textures, materials, styles, etc.) with size estimates
 - **Export to external `.res`** -- Extract embedded sub-resources into standalone binary `.res` files (filters out resources < 100 KB)
 - **Re-import** -- Merge exported external resources back into the scene file
-- **Automatic backups** -- Scene files are backed up before any modification
 - **Verification** -- Sub-resource counts are compared before and after operations to catch errors
 
 ## Installation

@@ -2,7 +2,7 @@
 class_name ImportFileUtils
 extends RefCounted
 ## File utility helpers for the scene resource importer:
-## backup, cleanup, file discovery, and reference checking.
+## cleanup, file discovery, and reference checking.
 
 const _TEMP_PATH: String = (
 	"res://.scene_res_import_temp.tres"
@@ -81,13 +81,3 @@ func cleanup_temp() -> void:
 		)
 
 
-## Create a backup copy of a scene file.
-func backup_scene(scene_path: String) -> Error:
-	var backup_path: String = scene_path + ".backup"
-	var abs_src: String = ProjectSettings.globalize_path(
-		scene_path
-	)
-	var abs_dst: String = ProjectSettings.globalize_path(
-		backup_path
-	)
-	return DirAccess.copy_absolute(abs_src, abs_dst)

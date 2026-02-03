@@ -68,13 +68,6 @@ func import_all_resources(
 	var result := ImportResult.new()
 	result.scene_path = scene_path
 
-	var backup_err := _file_utils.backup_scene(scene_path)
-	if backup_err != OK:
-		result.error_message = (
-			"Cannot create backup of %s" % scene_path
-		)
-		return result
-
 	var file := FileAccess.open(
 		scene_path, FileAccess.READ
 	)
